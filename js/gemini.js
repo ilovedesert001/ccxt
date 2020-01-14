@@ -3,7 +3,7 @@
 //  ---------------------------------------------------------------------------
 
 const Exchange = require ('./base/Exchange');
-const { ExchangeError, ArgumentsRequired, BadRequest, OrderNotFound, InvalidOrder, InvalidNonce, DDoSProtection, InsufficientFunds, AuthenticationError, ExchangeNotAvailable, PermissionDenied, NotSupported, OnMaintenance } = require ('./base/errors');
+const { ExchangeError, ArgumentsRequired, BadRequest, OrderNotFound, InvalidOrder, InvalidNonce, DDoSProtection, InsufficientFunds, AuthenticationError, PermissionDenied, NotSupported, OnMaintenance } = require ('./base/errors');
 
 //  ---------------------------------------------------------------------------
 
@@ -79,6 +79,7 @@ module.exports = class gemini extends Exchange {
                         'v1/order/status',
                         'v1/orders',
                         'v1/mytrades',
+                        'v1/notionalvolume',
                         'v1/tradevolume',
                         'v1/transfers',
                         'v1/balances',
@@ -103,7 +104,7 @@ module.exports = class gemini extends Exchange {
                 '429': DDoSProtection, // Rate Limiting was applied
                 '500': ExchangeError, // The server encountered an error
                 '502': ExchangeError, // Technical issues are preventing the request from being satisfied
-                '503': ExchangeNotAvailable, // The exchange is down for maintenance
+                '503': OnMaintenance, // The exchange is down for maintenance
             },
             'timeframes': {
                 '1m': '1m',
@@ -133,7 +134,7 @@ module.exports = class gemini extends Exchange {
                     'InvalidSignature': AuthenticationError, // The signature did not match the expected signature
                     'InvalidSymbol': BadRequest, // An invalid symbol was specified
                     'InvalidTimestampInPayload': BadRequest, // The JSON payload contained a timestamp parameter with an unsupported value.
-                    'Maintenance': ExchangeNotAvailable, // The system is down for maintenance
+                    'Maintenance': OnMaintenance, // The system is down for maintenance
                     'MarketNotOpen': InvalidOrder, // The order was rejected because the market is not accepting new orders
                     'MissingApikeyHeader': AuthenticationError, // The X-GEMINI-APIKEY header was missing
                     'MissingOrderField': InvalidOrder, // A required order_id field was not specified
@@ -636,14 +637,10 @@ module.exports = class gemini extends Exchange {
     }
 
     handleErrors (httpCode, reason, url, method, headers, body, response, requestHeaders, requestBody) {
-        const broad = this.exceptions['broad'];
         if (response === undefined) {
             if (typeof body === 'string') {
-                const broadKey = this.findBroadlyMatchedKey (broad, body);
                 const feedback = this.id + ' ' + body;
-                if (broadKey !== undefined) {
-                    throw new broad[broadKey] (feedback);
-                }
+                this.throwBroadlyMatchedException (this.exceptions['broad'], body, feedback);
             }
             return; // fallback to default error handler
         }
@@ -659,16 +656,9 @@ module.exports = class gemini extends Exchange {
             const reason = this.safeString (response, 'reason');
             const message = this.safeString (response, 'message');
             const feedback = this.id + ' ' + message;
-            const exact = this.exceptions['exact'];
-            if (reason in exact) {
-                throw new exact[reason] (feedback);
-            } else if (message in exact) {
-                throw new exact[message] (feedback);
-            }
-            const broadKey = this.findBroadlyMatchedKey (broad, message);
-            if (broadKey !== undefined) {
-                throw new broad[broadKey] (feedback);
-            }
+            this.throwExactlyMatchedException (this.exceptions['exact'], reason, feedback);
+            this.throwExactlyMatchedException (this.exceptions['exact'], message, feedback);
+            this.throwBroadlyMatchedException (this.exceptions['broad'], message, feedback);
             throw new ExchangeError (feedback); // unknown message
         }
     }
